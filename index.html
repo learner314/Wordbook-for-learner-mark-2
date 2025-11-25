@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="ja" class="antialiased">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ultimate Flashcards Cloud</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { darkBg: '#1a202c', darkCard: '#2d3748' } } }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; touch-action: manipulation; }
+        body.dark-mode { background-color: #1a202c; color: #e2e8f0; }
+        .perspective { perspective: 1000px; }
+        .flip-card-inner { position: relative; width: 100%; height: 100%; text-align: center; transition: transform 0.6s; transform-style: preserve-3d; }
+        .flip-card.flipped .flip-card-inner { transform: rotateY(180deg); }
+        .flip-card-front, .flip-card-back { position: absolute; width: 100%; height: 100%; backface-visibility: hidden; display: flex; flex-direction: column; justify-content: center; align-items: center; border-radius: 1rem; }
+        .flip-card-back { transform: rotateY(180deg); }
+        .google-btn { background: #fff; color: #757575; border: 1px solid #ddd; }
+        .apple-btn { background: #000; color: #fff; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 h-screen flex flex-col overflow-hidden transition-all">
+
+    <div id="loginModal" class="fixed inset-0 bg-black bg-opacity-90 z-[60] flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-2xl max-w-md w-full text-center">
+            <h2 class="text-3xl font-bold mb-2 dark:text-white">Welcome</h2>
+            <p class="text-gray-500 mb-8">学習データをクラウドで同期・共有</p>
+            
+            <div class="space-y-3">
+                <button onclick="loginGoogle()" class="w-full py-3 rounded-lg google-btn font-bold flex items-center justify-center hover:bg-gray-50 transition">
+                    <i class="fab fa-google mr-2 text-red-500"></i> Googleでログイン
+                </button>
+                <button onclick="alert('AppleログインはHTTPS環境と開発者登録が必要です。まずはGoogleをお試しください。')" class="w-full py-3 rounded-lg apple-btn font-bold flex items-center justify-center hover:opacity-90 transition">
+                    <i class="fab fa-apple mr-2 text-white"></i> Appleでログイン
+                </button>
+                
+                <div class="relative my-6">
+                    <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-300"></div></div>
+                    <div class="relative flex justify-center text-sm"><span class="px-2 bg-white dark:bg-gray-800 text-gray-500">または メールアドレス</span></div>
+                </div>
+
+                <input type="email" id="emailInput" placeholder="Email" class="w-full p-3 rounded border dark:bg-gray-700 dark:text-white mb-2">
+                <input type="password" id="passInput" placeholder="Password" class="w-full p-3 rounded border dark:bg-gray-700 dark:text-white mb-4">
+                
+                <div class="flex space-x-2">
+                    <button onclick="loginEmail()" class="flex-1 bg-blue-600 text-white py-3 rounded-lg font-bold">ログイン</button>
+                    <button onclick="signupEmail()" class="flex-1 bg-green-600 text-white py-3 rounded-lg font-bold">新規登録</button>
+                </div>
+            </div>
+            <button onclick="startGuest()" class="mt-6 text-sm text-gray-500 underline">ログインせずに利用 (データ保存なし)</button>
+        </div>
+    </div>
+
+    <header class="flex justify-between items-center p-4 bg-white shadow-sm z-10 dark:bg-gray-800">
+        <div class="flex items-center space-x-2">
+            <button onclick="toggleMenu()" class="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-white"><i class="fas fa-bars text-xl"></i></button>
+            <button onclick="showSection('study')" id="homeBtn" class="hidden p-2 rounded text-blue-600"><i class="fas fa-home text-xl"></i></button>
+            <select id="deckSelect" onchange="changeDeck(this.value)" class="bg-transparent font-bold text-lg max-w-[120px] truncate dark:text-white outline-none">
+                <option value="ALL">ALL</option>
+            </select>
+        </div>
+        <div class="flex items-center space-x-3">
+            <span id="streakCount" class="text-sm font-bold dark:text-white"><i class="fas fa-fire text-orange-500"></i> 0</span>
+            <img id="userAvatar" src="" class="w-8 h-8 rounded-full border hidden">
+        </div>
+    </header>
+
+    <div id="menuOverlay" class="fixed inset-0 bg-black bg-opacity-50 z-40 hidden" onclick="toggleMenu()"></div>
+    <div id="sideMenu" class="fixed left-0 top-0 h-full w-80 bg-white dark:bg-gray-800 shadow-xl transform -translate-x-full transition-transform z-50 p-6 overflow-y-auto">
+        <div class="mb-6 flex items-center space-x-3">
+            <div id="menuUserIcon" class="w-12 h-12 rounded-full bg-gray-300 flex items-center justify-center text-xl">👤</div>
+            <div>
+                <p id="menuUserName" class="font-bold dark:text-white">Guest</p>
+                <button onclick="handleLogout()" class="text-xs text-red-500">ログアウト</button>
+            </div>
+        </div>
+        <div class="space-y-4">
+            <button onclick="showSection('study')" class="w-full text-left p-3 rounded hover:bg-gray-100 dark:text-gray-200"><i class="fas fa-graduation-cap w-6"></i> 学習ホーム</button>
+            <button onclick="showSection('library')" class="w-full text-left p-3 rounded hover:bg-gray-100 dark:text-gray-200 text-blue-600"><i class="fas fa-globe w-6"></i> みんなの単語帳 (公開)</button>
+            <button onclick="showSection('decks')" class="w-full text-left p-3 rounded hover:bg-gray-100 dark:text-gray-200"><i class="fas fa-layer-group w-6"></i> My単語帳管理</button>
+            <button onclick="showSection('stats')" class="w-full text-left p-3 rounded hover:bg-gray-100 dark:text-gray-200"><i class="fas fa-chart-bar w-6"></i> 統計</button>
+        </div>
+    </div>
+
+    <main class="flex-1 relative overflow-hidden">
+        
+        <section id="studySection" class="absolute inset-0 flex flex-col p-4 pb-20">
+            <div class="flex justify-between mb-2 text-gray-500 text-sm">
+                <span>残: <span id="queueCount">0</span></span>
+                <button onclick="toggleShuffle()" id="shuffleBtn">順に出題</button>
+            </div>
+            <div class="flex-1 perspective w-full max-w-2xl mx-auto flex items-center justify-center">
+                <div id="flashcard" class="flip-card w-full h-[60vh] cursor-pointer" onclick="flipCard()">
+                    <div class="flip-card-inner shadow-xl rounded-2xl bg-white dark:bg-gray-800 border dark:border-gray-700">
+                        <div class="flip-card-front bg-white dark:bg-gray-800 rounded-2xl p-6">
+                            <span class="absolute top-4 left-4 text-xs text-gray-400" id="cNo">No.1</span>
+                            <span class="absolute top-4 right-4 text-2xl" id="cEmoji">📘</span>
+                            <h2 id="cFront" class="text-4xl font-bold text-center dark:text-white">Ready?</h2>
+                            <span id="cTag" class="absolute bottom-4 text-xs bg-gray-100 px-2 py-1 rounded">Tag</span>
+                        </div>
+                        <div class="flip-card-back bg-white dark:bg-gray-800 rounded-2xl p-6 overflow-y-auto">
+                            <h3 id="cBack" class="text-3xl font-bold text-blue-600 dark:text-blue-400 mb-4">Answer</h3>
+                            <div class="bg-gray-50 dark:bg-gray-700 p-3 rounded w-full mb-2">
+                                <p class="text-xs text-gray-400">例文</p>
+                                <p id="cEx" class="italic dark:text-gray-200">...</p>
+                            </div>
+                            <button onclick="speakWord(event)" class="mt-4 p-3 bg-blue-100 rounded-full text-blue-600"><i class="fas fa-volume-up"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="controls" class="hidden flex space-x-2 h-14 mt-4">
+                <button onclick="rate(4)" class="flex-1 bg-red-100 text-red-800 rounded">忘れた</button>
+                <button onclick="rate(2)" class="flex-1 bg-green-100 text-green-800 rounded">普通</button>
+                <button onclick="rate(1)" class="flex-1 bg-blue-100 text-blue-800 rounded">完璧</button>
+            </div>
+            <button id="revealBtn" onclick="flipCard()" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold shadow-lg mt-4">答えを表示</button>
+        </section>
+
+        <section id="librarySection" class="absolute inset-0 bg-white dark:bg-gray-900 p-4 overflow-y-auto hidden">
+            <h2 class="text-2xl font-bold mb-4 dark:text-white"><i class="fas fa-globe"></i> みんなの単語帳</h2>
+            <div class="mb-4">
+                <input type="text" id="searchPublic" placeholder="単語帳を検索..." class="w-full p-2 border rounded dark:bg-gray-800 dark:text-white">
+            </div>
+            <div id="publicDeckList" class="grid grid-cols-1 gap-4">
+                <div class="text-center text-gray-500 mt-10">読み込み中...</div>
+            </div>
+        </section>
+
+        <section id="decksSection" class="absolute inset-0 bg-white dark:bg-gray-900 p-4 overflow-y-auto hidden">
+            <h2 class="text-2xl font-bold mb-4 dark:text-white">My単語帳</h2>
+            
+            <div class="mb-6 p-4 border border-dashed rounded-xl text-center">
+                <h3 class="font-bold dark:text-white">新しい単語を追加</h3>
+                <button onclick="document.getElementById('csvIn').click()" class="mt-2 bg-gray-600 text-white px-4 py-2 rounded">CSVインポート</button>
+                <input type="file" id="csvIn" class="hidden" onchange="importCSV(this)">
+            </div>
+
+            <div class="mb-4">
+                <h3 class="font-bold dark:text-white">公開設定</h3>
+                <p class="text-xs text-gray-500 mb-2">選択中のデッキを公開ライブラリにアップロードします。</p>
+                <button onclick="publishCurrentDeck()" class="w-full bg-blue-600 text-white py-2 rounded font-bold">
+                    <i class="fas fa-upload"></i> このデッキを公開する
+                </button>
+            </div>
+            
+            <h3 class="font-bold mt-6 dark:text-white">カード一覧</h3>
+            <div id="myCardList" class="space-y-2 text-sm dark:text-gray-300"></div>
+        </section>
+
+        <section id="statsSection" class="absolute inset-0 bg-white dark:bg-gray-900 p-4 hidden">
+            <h2 class="text-2xl font-bold dark:text-white">統計</h2>
+            <p class="dark:text-white">学習カード数: <span id="statTotal">0</span></p>
+            <canvas id="chartCtx" class="mt-4"></canvas>
+        </section>
+
+    </main>
+
+<script>
+// ==========================================
+// 1. FIREBASE CONFIGURATION
+// ==========================================
+// TODO: Firebase Consoleで取得したconfigをここに貼り付けてください
+const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT_ID.appspot.com",
+    messagingSenderId: "SENDER_ID",
+    appId: "APP_ID"
+};
+
+// Initialize Firebase
+let app, auth, db;
+try {
+    app = firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    db = firebase.firestore();
+} catch (e) {
+    console.error("Firebase init failed. Did you paste the config?", e);
+}
+
+// ==========================================
+// 2. APP STATE
+// ==========================================
+let currentUser = null;
+let cards = [];
+let queue = [];
+let currentCard = null;
+let currentDeck = 'ALL';
+
+// ==========================================
+// 3. AUTHENTICATION
+// ==========================================
+function loginGoogle() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(e => alert(e.message));
+}
+function loginEmail() {
+    const email = document.getElementById('emailInput').value;
+    const pass = document.getElementById('passInput').value;
+    auth.signInWithEmailAndPassword(email, pass).catch(e => alert(e.message));
+}
+function signupEmail() {
+    const email = document.getElementById('emailInput').value;
+    const pass = document.getElementById('passInput').value;
+    auth.createUserWithEmailAndPassword(email, pass).catch(e => alert(e.message));
+}
+function handleLogout() {
+    auth.signOut();
+    location.reload();
+}
+function startGuest() {
+    document.getElementById('loginModal').classList.add('hidden');
+    // Guest uses localStorage only (simplified legacy mode)
+    loadLocal();
+}
+
+// Auth Listener
+if(auth) {
+    auth.onAuthStateChanged(user => {
+        if (user) {
+            currentUser = user;
+            document.getElementById('loginModal').classList.add('hidden');
+            document.getElementById('menuUserName').innerText = user.displayName || user.email;
+            if(user.photoURL) {
+                document.getElementById('userAvatar').src = user.photoURL;
+                document.getElementById('userAvatar').classList.remove('hidden');
+            }
+            loadFromCloud(); // Sync data
+        }
+    });
+}
+
+// ==========================================
+// 4. DATA SYNC (Cloud & Publish)
+// ==========================================
+async function loadFromCloud() {
+    if(!currentUser) return;
+    const docRef = db.collection('users').doc(currentUser.uid);
+    const doc = await docRef.get();
+    
+    if (doc.exists) {
+        const data = doc.data();
+        cards = data.cards || [];
+        updateDeckUI();
+        prepareSession();
+    } else {
+        // New user: Save empty or init
+        saveToCloud();
+    }
+}
+
+async function saveToCloud() {
+    if(!currentUser) return;
+    await db.collection('users').doc(currentUser.uid).set({
+        cards: cards,
+        lastUpdate: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+}
+
+// Publish Deck Logic
+async function publishCurrentDeck() {
+    if(!currentUser) return alert("ログインが必要です");
+    if(currentDeck === 'ALL') return alert("特定のタグ(デッキ)を選択してから公開してください");
+
+    const deckCards = cards.filter(c => c.tag === currentDeck);
+    if(deckCards.length === 0) return alert("カードがありません");
+
+    const title = prompt("公開する単語帳のタイトルを入力:", currentDeck);
+    if(!title) return;
+
+    try {
+        await db.collection('public_decks').add({
+            title: title,
+            authorName: currentUser.displayName || "Unknown",
+            authorId: currentUser.uid,
+            cards: deckCards, // Clean stats if needed
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            likes: 0
+        });
+        alert("公開しました！「みんなの単語帳」に表示されます。");
+    } catch(e) {
+        alert("公開エラー: " + e.message);
+    }
+}
+
+async function loadPublicLibrary() {
+    const list = document.getElementById('publicDeckList');
+    list.innerHTML = '<div class="text-center"><i class="fas fa-spinner fa-spin"></i></div>';
+    
+    const snap = await db.collection('public_decks').orderBy('createdAt', 'desc').limit(20).get();
+    list.innerHTML = '';
+    
+    snap.forEach(doc => {
+        const d = doc.data();
+        const div = document.createElement('div');
+        div.className = "bg-gray-100 dark:bg-gray-800 p-4 rounded-xl shadow border dark:border-gray-700";
+        div.innerHTML = `
+            <div class="flex justify-between items-start">
+                <div>
+                    <h3 class="font-bold text-lg dark:text-white">${d.title}</h3>
+                    <p class="text-xs text-gray-500">by ${d.authorName} • ${d.cards.length}語</p>
+                </div>
+                <button onclick="downloadDeck('${doc.id}')" class="bg-blue-600 text-white px-3 py-1 rounded text-sm font-bold">
+                    <i class="fas fa-download"></i> 追加
+                </button>
+            </div>
+        `;
+        list.appendChild(div);
+    });
+}
+
+async function downloadDeck(id) {
+    const doc = await db.collection('public_decks').doc(id).get();
+    const data = doc.data();
+    
+    // Add cards with new IDs to avoid conflicts
+    const newCards = data.cards.map(c => ({
+        ...c,
+        id: Date.now() + Math.random(),
+        status: 'new', // Reset progress
+        tag: data.title // Use deck title as tag
+    }));
+    
+    cards = [...cards, ...newCards];
+    saveToCloud();
+    alert(`「${data.title}」をMy単語帳に追加しました！`);
+    updateDeckUI();
+}
+
+// ==========================================
+// 5. APP LOGIC (Simplified for Space)
+// ==========================================
+function prepareSession() {
+    const target = currentDeck === 'ALL' ? cards : cards.filter(c => c.tag === currentDeck);
+    queue = target.filter(c => c.status !== 'mastered'); // Simple Logic
+    document.getElementById('queueCount').innerText = queue.length;
+    if(queue.length > 0) loadCard(queue[0]);
+    else document.getElementById('cFront').innerText = "完了!";
+}
+
+function loadCard(c) {
+    currentCard = c;
+    document.getElementById('flashcard').classList.remove('flipped');
+    document.getElementById('controls').classList.add('hidden');
+    document.getElementById('revealBtn').classList.remove('hidden');
+    
+    document.getElementById('cFront').innerText = c.word;
+    document.getElementById('cBack').innerText = c.meaning;
+    document.getElementById('cEx').innerText = c.example || '-';
+    document.getElementById('cTag').innerText = c.tag || 'Gen';
+    document.getElementById('cEmoji').innerText = c.emoji || '📄';
+}
+
+function flipCard() {
+    document.getElementById('flashcard').classList.add('flipped');
+    document.getElementById('controls').classList.remove('hidden');
+    document.getElementById('revealBtn').classList.add('hidden');
+}
+
+function rate(quality) {
+    // Save locally & cloud
+    if(quality === 1) currentCard.status = 'mastered';
+    saveToCloud(); // Sync
+    
+    queue.shift();
+    if(queue.length > 0) loadCard(queue[0]);
+    else alert("セッション終了");
+    
+    document.getElementById('queueCount').innerText = queue.length;
+}
+
+// UI Helpers
+function toggleMenu() {
+    const m = document.getElementById('sideMenu');
+    const o = document.getElementById('menuOverlay');
+    if(m.classList.contains('-translate-x-full')) {
+        m.classList.remove('-translate-x-full');
+        o.classList.remove('hidden');
+    } else {
+        m.classList.add('-translate-x-full');
+        o.classList.add('hidden');
+    }
+}
+
+function showSection(id) {
+    document.getElementById('studySection').classList.add('hidden');
+    document.getElementById('librarySection').classList.add('hidden');
+    document.getElementById('decksSection').classList.add('hidden');
+    document.getElementById('statsSection').classList.add('hidden');
+    document.getElementById(id+'Section').classList.remove('hidden');
+    document.getElementById('homeBtn').classList.toggle('hidden', id !== 'study');
+    toggleMenu();
+
+    if(id === 'library') loadPublicLibrary();
+    if(id === 'decks') renderMyList();
+}
+
+function updateDeckUI() {
+    const tags = new Set(cards.map(c => c.tag || 'Gen'));
+    const sel = document.getElementById('deckSelect');
+    sel.innerHTML = '<option value="ALL">ALL</option>';
+    tags.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t; opt.innerText = t;
+        sel.appendChild(opt);
+    });
+}
+function changeDeck(val) { currentDeck = val; prepareSession(); }
+
+function importCSV(input) {
+    const file = input.files[0];
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const lines = e.target.result.split('\n');
+        lines.forEach(l => {
+            const p = l.split(',');
+            if(p.length > 1) {
+                cards.push({
+                    id: Date.now()+Math.random(),
+                    word: p[1], meaning: p[2], example: p[3], 
+                    tag: p[6]?.trim() || 'Imported', status: 'new'
+                });
+            }
+        });
+        saveToCloud();
+        alert("インポート完了");
+        updateDeckUI();
+    };
+    reader.readAsText(file);
+}
+
+function renderMyList() {
+    const list = document.getElementById('myCardList');
+    list.innerHTML = '';
+    cards.slice(0,30).forEach(c => {
+        list.innerHTML += `<div class="p-2 border-b flex justify-between"><span>${c.word}</span><span class="text-gray-400">${c.tag}</span></div>`;
+    });
+}
+function speakWord(e) { e.stopPropagation(); const u = new SpeechSynthesisUtterance(currentCard.word); u.lang='en-US'; speechSynthesis.speak(u); }
+</script>
+</body>
+</html>
